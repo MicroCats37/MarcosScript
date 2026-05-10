@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from backend.database import get_db
 from backend.models import Event, PhotoState, ProcessedFrame
 from backend.schemas import (
+    DriveUploadResponse,
     FrameResponse,
     PhotoWithFramesResponse,
     ProcessRequest,
@@ -16,8 +17,39 @@ from backend.schemas import (
     ProcessResult,
 )
 from backend.services.processor import process_photo_with_frames
+from backend.services import google_drive
+from backend.config import drive_config
 
 router = APIRouter(prefix="/events", tags=["photos"])
+
+
+def _attempt_drive_upload(processed_frame: ProcessedFrame, output_dir: str) -> None:
+    """
+    Attempt to upload a processed frame to Google Drive.
+    Updates the ProcessedFrame with Drive metadata or error.
+    This is non-blocking - failures are logged but don't stop processing.
+    """
+    if not drive_config.is_configured:
+        return  # Drive not configured, skip silently
+
+    file_path = os.path.join(output_dir, processed_frame.output_filename)
+    if not os.path.isfile(file_path):
+        processed_frame.drive_upload_error = f"Output file not found: {file_path}"
+        return
+
+    result = google_drive.upload_file_to_drive(
+        file_path=file_path,
+        filename=processed_frame.output_filename,
+    )
+
+    if result.success:
+        from datetime import datetime
+        processed_frame.drive_file_id = result.file_id
+        processed_frame.drive_web_view_link = result.web_view_link
+        processed_frame.drive_uploaded_at = datetime.utcnow()
+        processed_frame.drive_upload_error = None
+    else:
+        processed_frame.drive_upload_error = result.error
 
 
 @router.get("/{event_id}/photos", response_model=List[PhotoWithFramesResponse])
@@ -149,6 +181,10 @@ def process_photos(event_id: int, request: ProcessRequest, db: Session = Depends
                     output_filename=output_filename,
                 )
                 db.add(processed_frame)
+                db.flush()  # Get ID for Drive upload
+
+                # Attempt Drive upload (non-blocking - continue even if it fails)
+                _attempt_drive_upload(processed_frame, event.output_path)
 
                 # Update photo status to completed
                 photo.status = "completed"
@@ -182,3 +218,62 @@ def process_photos(event_id: int, request: ProcessRequest, db: Session = Depends
         total_processed=total_processed,
         total_skipped=total_skipped,
     )
+
+
+@router.post("/processed-frames/{frame_id}/drive-upload", response_model=DriveUploadResponse)
+def retry_drive_upload(frame_id: int, db: Session = Depends(get_db)):
+    """
+    Retry Drive upload for a processed frame.
+
+    Useful when previous upload failed or Drive wasn't configured during processing.
+    """
+    frame = db.query(ProcessedFrame).filter(ProcessedFrame.id == frame_id).first()
+    if not frame:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Processed frame not found")
+
+    # Get the photo state to find event output path
+    photo_state = db.query(PhotoState).filter(PhotoState.id == frame.photo_state_id).first()
+    if not photo_state:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Photo state not found")
+
+    event = db.query(Event).filter(Event.id == photo_state.event_id).first()
+    if not event:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Event not found")
+
+    # Attempt upload
+    file_path = os.path.join(event.output_path, frame.output_filename)
+    if not os.path.isfile(file_path):
+        return DriveUploadResponse(
+            success=False,
+            message=f"Output file not found: {file_path}",
+            drive_upload_error=f"File not found: {file_path}",
+        )
+
+    result = google_drive.upload_file_to_drive(
+        file_path=file_path,
+        filename=frame.output_filename,
+    )
+
+    # Update frame with result
+    from datetime import datetime
+    if result.success:
+        frame.drive_file_id = result.file_id
+        frame.drive_web_view_link = result.web_view_link
+        frame.drive_uploaded_at = datetime.utcnow()
+        frame.drive_upload_error = None
+        db.commit()
+        return DriveUploadResponse(
+            success=True,
+            message="Upload successful",
+            drive_file_id=result.file_id,
+            drive_web_view_link=result.web_view_link,
+            drive_uploaded_at=frame.drive_uploaded_at,
+        )
+    else:
+        frame.drive_upload_error = result.error
+        db.commit()
+        return DriveUploadResponse(
+            success=False,
+            message=f"Upload failed: {result.error}",
+            drive_upload_error=result.error,
+        )

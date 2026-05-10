@@ -108,3 +108,104 @@ export const processApi = {
       }
     ),
 };
+
+// CIP Lookup API
+export interface CipLookupResponse {
+  cip: string;
+  name: string | null;
+  email: string | null;
+  found: boolean;
+}
+
+export const cipApi = {
+  lookup: (cip: string) =>
+    fetchJson<CipLookupResponse>(`${API_BASE}/cip/${encodeURIComponent(cip)}/lookup`),
+};
+
+// Drive Upload API
+export interface DriveUploadResponse {
+  success: boolean;
+  message: string;
+  drive_file_id?: string | null;
+  drive_web_view_link?: string | null;
+  drive_uploaded_at?: string | null;
+  drive_upload_error?: string | null;
+}
+
+export const driveApi = {
+  retryUpload: (frameId: number) =>
+    fetchJson<DriveUploadResponse>(
+      `${API_BASE}/events/processed-frames/${frameId}/drive-upload`,
+      { method: 'POST' }
+    ),
+};
+
+// Email Send API
+export interface RecipientInput {
+  cip?: string;
+  name?: string;
+  email: string;
+}
+
+export interface EmailSendRequest {
+  processed_frame_ids: number[];
+  recipients: RecipientInput[];
+  subject: string;
+  body?: string;
+  html: boolean;
+  cc?: string[];
+  bcc?: string[];
+  usuario_creacion?: string;
+}
+
+export interface EmailSendItemResponse {
+  id: number;
+  processed_frame_id: number;
+  drive_link: string;
+  status: string;
+  error_message: string | null;
+  sent_at: string | null;
+}
+
+export interface EmailSendResponse {
+  id: number;
+  event_id: number;
+  cip: string | null;
+  recipient_email: string;
+  recipient_name: string | null;
+  subject: string;
+  body_template: string | null;
+  html: boolean;
+  status: string;
+  noti_response: string | null;
+  error_message: string | null;
+  usuario_creacion: string | null;
+  created_at: string;
+  items: EmailSendItemResponse[];
+}
+
+export interface EmailSendBatchResponse {
+  sends: EmailSendResponse[];
+}
+
+export const emailApi = {
+  send: (eventId: number, request: EmailSendRequest) =>
+    fetchJson<EmailSendBatchResponse>(
+      `${API_BASE}/events/${eventId}/email/send`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(request),
+      }
+    ),
+
+  listSends: (eventId: number, status?: string) => {
+    const url = status
+      ? `${API_BASE}/events/${eventId}/email/sends?status=${encodeURIComponent(status)}`
+      : `${API_BASE}/events/${eventId}/email/sends`;
+    return fetchJson<EmailSendResponse[]>(url);
+  },
+
+  getSend: (sendId: number) =>
+    fetchJson<EmailSendResponse>(`${API_BASE}/email/sends/${sendId}`),
+};

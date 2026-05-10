@@ -7,6 +7,44 @@ export interface ProcessedFrame {
   frame_filename: string;
   output_filename: string;
   processed_at: string;
+  // Drive metadata
+  drive_file_id?: string | null;
+  drive_web_view_link?: string | null;
+  drive_uploaded_at?: string | null;
+  drive_upload_error?: string | null;
+  // Helper
+  is_sendable?: boolean;
+}
+
+// Helper to check if a processed frame has a Drive link (sendable)
+export const isSendable = (frame: ProcessedFrame): boolean =>
+  !!frame.drive_web_view_link;
+
+export interface CipLookupResult {
+  cip: string;
+  name: string | null;
+  email: string | null;
+  found: boolean;
+}
+
+export interface EmailSendRecord {
+  id: number;
+  event_id: number;
+  cip: string | null;
+  recipient_email: string;
+  recipient_name: string | null;
+  subject: string;
+  status: string;
+  error_message: string | null;
+  created_at: string;
+  items: Array<{
+    id: number;
+    processed_frame_id: number;
+    drive_link: string;
+    status: string;
+    error_message: string | null;
+    sent_at: string | null;
+  }>;
 }
 
 export interface Photo {
@@ -61,6 +99,38 @@ interface EventStoreValue {
   createEvent: (data: Omit<Event, 'id' | 'created_at' | 'updated_at' | 'is_active'>) => Promise<void>;
   deleteEvent: (eventId: number) => Promise<void>;
   processPhotos: (eventId: number, photoIds: number[], frameFilenames: string[]) => Promise<void>;
+  // Email send actions
+  cipLookup: (cip: string) => Promise<CipLookupResult>;
+  sendEmail: (eventId: number, request: EmailSendRequest) => Promise<EmailSendRecord[]>;
+  listEmailSends: (eventId: number, status?: string) => Promise<EmailSendRecord[]>;
+  getEmailSend: (sendId: number) => Promise<EmailSendRecord>;
+  retryDriveUpload: (frameId: number) => Promise<DriveUploadResponse>;
+}
+
+export interface EmailSendRequest {
+  processed_frame_ids: number[];
+  recipients: RecipientInput[];
+  subject: string;
+  body?: string;
+  html: boolean;
+  cc?: string[];
+  bcc?: string[];
+  usuario_creacion?: string;
+}
+
+export interface RecipientInput {
+  cip?: string;
+  name?: string;
+  email: string;
+}
+
+export interface DriveUploadResponse {
+  success: boolean;
+  message: string;
+  drive_file_id?: string | null;
+  drive_web_view_link?: string | null;
+  drive_uploaded_at?: string | null;
+  drive_upload_error?: string | null;
 }
 
 const EventContext = createContext<EventStoreValue>();
@@ -213,6 +283,56 @@ export const EventProvider: ParentComponent = (props) => {
       } catch (e) {
         setState('error', e instanceof Error ? e.message : 'Unknown error');
       }
+    },
+
+    cipLookup: async (cip: string) => {
+      const res = await fetch(`${API_BASE}/cip/${encodeURIComponent(cip)}/lookup`);
+      if (!res.ok) throw new Error('CIP lookup failed');
+      return res.json() as CipLookupResult;
+    },
+
+    sendEmail: async (eventId: number, request: EmailSendRequest) => {
+      const res = await fetch(`${API_BASE}/events/${eventId}/email/send`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(request),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: 'Email send failed' }));
+        throw new Error(err.detail || 'Email send failed');
+      }
+      const data = await res.json();
+      return (data.sends as EmailSendResponse[]);
+    },
+
+    listEmailSends: async (eventId: number, status?: string) => {
+      const url = status
+        ? `${API_BASE}/events/${eventId}/email/sends?status=${encodeURIComponent(status)}`
+        : `${API_BASE}/events/${eventId}/email/sends`;
+      const res = await fetch(url);
+      if (!res.ok) throw new Error('Failed to load email history');
+      return res.json() as EmailSendRecord[];
+    },
+
+    getEmailSend: async (sendId: number) => {
+      const res = await fetch(`${API_BASE}/email/sends/${sendId}`);
+      if (!res.ok) throw new Error('Failed to load email send details');
+      return res.json() as EmailSendRecord;
+    },
+
+    retryDriveUpload: async (frameId: number) => {
+      const res = await fetch(`${API_BASE}/processed-frames/${frameId}/drive-upload`, {
+        method: 'POST',
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: 'Retry failed' }));
+        throw new Error(err.detail || 'Retry failed');
+      }
+      // Reload photos after retry
+      if (state.currentEvent) {
+        await store.loadPhotos(state.currentEvent.id);
+      }
+      return res.json() as DriveUploadResponse;
     },
   };
 

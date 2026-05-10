@@ -69,6 +69,15 @@ class ProcessedFrameResponse(BaseModel):
     frame_filename: str
     output_filename: str
     processed_at: datetime
+    # Drive metadata
+    drive_file_id: Optional[str] = None
+    drive_web_view_link: Optional[str] = None
+    drive_uploaded_at: Optional[datetime] = None
+    drive_upload_error: Optional[str] = None
+
+    @property
+    def is_sendable(self) -> bool:
+        return self.drive_web_view_link is not None
 
     class Config:
         from_attributes = True
@@ -116,3 +125,88 @@ class FrameResponse(BaseModel):
     """Schema for frame file info."""
     filename: str
     path: str
+
+
+# --- CIP Lookup Schemas ---
+class CipLookupResponse(BaseModel):
+    """Schema for CIP lookup response."""
+    cip: str
+    name: Optional[str] = None
+    email: Optional[str] = None
+    found: bool
+
+
+# --- Email Send Schemas ---
+class RecipientInput(BaseModel):
+    """Schema for a single email recipient."""
+    cip: Optional[str] = None
+    name: Optional[str] = None
+    email: str = Field(..., min_length=1)
+
+
+class EmailSendRequest(BaseModel):
+    """Schema for email send request."""
+    processed_frame_ids: list[int] = Field(..., min_length=1)
+    recipients: list[RecipientInput] = Field(..., min_length=1)
+    subject: str = Field(..., min_length=1, max_length=1024)
+    body: Optional[str] = None
+    html: bool = True
+    cc: list[str] = Field(default_factory=list)
+    bcc: list[str] = Field(default_factory=list)
+    usuario_creacion: Optional[str] = None
+
+
+class EmailSendItemResponse(BaseModel):
+    """Schema for email send item response."""
+    id: int
+    processed_frame_id: int
+    drive_link: str
+    status: str
+    error_message: Optional[str] = None
+    sent_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+
+class EmailSendResponse(BaseModel):
+    """Schema for email send response."""
+    id: int
+    event_id: int
+    cip: Optional[str] = None
+    recipient_email: str
+    recipient_name: Optional[str] = None
+    subject: str
+    body_template: Optional[str] = None
+    html: bool
+    status: str
+    noti_response: Optional[str] = None
+    error_message: Optional[str] = None
+    usuario_creacion: Optional[str] = None
+    created_at: datetime
+    items: list[EmailSendItemResponse] = []
+
+    class Config:
+        from_attributes = True
+
+
+class EmailSendResult(BaseModel):
+    """Schema for email send result (one per recipient)."""
+    email_send: EmailSendResponse
+    items_created: int
+
+
+class EmailSendBatchResponse(BaseModel):
+    """Schema for email send batch response (multiple recipients)."""
+    sends: list[EmailSendResponse]
+
+
+# --- Drive Upload Schemas ---
+class DriveUploadResponse(BaseModel):
+    """Schema for drive upload response."""
+    drive_file_id: Optional[str] = None
+    drive_web_view_link: Optional[str] = None
+    drive_uploaded_at: Optional[datetime] = None
+    drive_upload_error: Optional[str] = None
+    success: bool
+    message: str

@@ -59,9 +59,58 @@ class ProcessedFrame(Base):
     output_filename = Column(String(512), nullable=False)
     processed_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
+    # Drive upload metadata
+    drive_file_id = Column(String(255), nullable=True)
+    drive_web_view_link = Column(String(1024), nullable=True)
+    drive_uploaded_at = Column(DateTime, nullable=True)
+    drive_upload_error = Column(Text, nullable=True)
+
     # Relationships
     photo_state = relationship("PhotoState", back_populates="processed_frames")
 
     __table_args__ = (
         UniqueConstraint("photo_state_id", "frame_filename", name="uq_photo_frame"),
     )
+
+
+class EmailSend(Base):
+    """EmailSend model tracking batch send attempts to a single recipient."""
+
+    __tablename__ = "email_sends"
+
+    id = Column(Integer, primary_key=True, index=True)
+    event_id = Column(Integer, ForeignKey("events.id", ondelete="CASCADE"), nullable=False)
+    cip = Column(String(64), nullable=True)
+    recipient_email = Column(String(512), nullable=False)
+    recipient_name = Column(String(512), nullable=True)
+    subject = Column(String(1024), nullable=False)
+    body_template = Column(Text, nullable=True)
+    html = Column(Integer, default=1, nullable=False)  # 1=html, 0=plain
+    status = Column(String(32), default="pending", nullable=False)  # pending|sent_to_noti|failed
+    noti_response = Column(Text, nullable=True)
+    error_message = Column(Text, nullable=True)
+    usuario_creacion = Column(String(128), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    # Relationships
+    event = relationship("Event")
+    items = relationship("EmailSendItem", back_populates="email_send", cascade="all, delete-orphan")
+
+
+class EmailSendItem(Base):
+    """EmailSendItem model tracking individual photo links sent in an EmailSend."""
+
+    __tablename__ = "email_send_items"
+
+    id = Column(Integer, primary_key=True, index=True)
+    email_send_id = Column(Integer, ForeignKey("email_sends.id", ondelete="CASCADE"), nullable=False)
+    processed_frame_id = Column(Integer, ForeignKey("processed_frames.id", ondelete="CASCADE"), nullable=False)
+    drive_link = Column(String(1024), nullable=False)
+    status = Column(String(32), default="pending", nullable=False)  # pending|sent|failed
+    error_message = Column(Text, nullable=True)
+    sent_at = Column(DateTime, nullable=True)
+
+    # Relationships
+    email_send = relationship("EmailSend", back_populates="items")
+    processed_frame = relationship("ProcessedFrame")

@@ -1,6 +1,7 @@
 import { Component, For, Show, createSignal, createMemo } from 'solid-js';
 import { Photo } from '../stores/EventContext';
 import { PhotoCard } from './PhotoCard';
+import { LoadingSpinner, EmptyStateMessage } from '../App';
 
 interface PhotoGridProps {
   photos: Photo[];
@@ -12,7 +13,7 @@ interface PhotoGridProps {
   isPhotoFrameProcessed: (photo: Photo, frame: string) => boolean;
   onSelectAll: () => void;
   onDeselectAll: () => void;
-  onViewImage: (imageUrl: string, title: string) => void; // Cambiado para imagen individual
+  onViewImage: (imageUrl: string, title: string) => void;
 }
 
 export const PhotoGrid: Component<PhotoGridProps> = (props) => {
@@ -43,28 +44,42 @@ export const PhotoGrid: Component<PhotoGridProps> = (props) => {
   return (
     <div class="photo-grid-container flex flex-col h-full">
       {/* Header with Search and Selection Controls */}
-      <div class="flex flex-col gap-4 mb-6 sticky top-0 bg-gray-900/90 backdrop-blur-md py-4 z-20 border-b border-gray-800">
+      <div class="flex flex-col gap-4 mb-4">
         <div class="flex items-center justify-between">
           <div class="flex items-center gap-4 flex-1">
-            <h3 class="text-lg font-bold text-white whitespace-nowrap">
-              Photos ({filteredPhotos().length})
+            <h3 class="text-lg font-bold text-blue-100 whitespace-nowrap flex items-center gap-2">
+              Photos
+              <span class="text-xs font-semibold text-blue-400/60 bg-slate-800 px-2 py-0.5 rounded-full">
+                {filteredPhotos().length}
+              </span>
             </h3>
             <div class="relative max-w-xs w-full">
+              <div class="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none">
+                <svg class="w-4 h-4 text-blue-400/50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                </svg>
+              </div>
               <input
                 type="text"
-                placeholder="Search by filename..."
+                placeholder="Search photos..."
                 value={searchTerm()}
                 onInput={(e) => setSearchTerm(e.currentTarget.value)}
-                class="w-full bg-gray-800 border border-gray-700 text-gray-200 text-sm rounded-xl px-4 py-2 focus:ring-2 focus:ring-indigo-500 outline-none transition-all"
+                class="w-full bg-slate-900/60 border border-slate-700 text-blue-200 text-sm rounded-xl pl-10 pr-4 py-2 focus:ring-2 focus:ring-blue-500 outline-none transition-all placeholder-slate-500"
               />
             </div>
           </div>
           
           <div class="flex gap-2">
-            <button onClick={props.onSelectAll} class="px-3 py-1.5 text-xs font-bold bg-gray-800 hover:bg-indigo-600 text-gray-300 hover:text-white rounded-lg transition-all border border-gray-700">
+            <button 
+              onClick={props.onSelectAll} 
+              class="px-3 py-1.5 text-xs font-semibold bg-slate-800 hover:bg-blue-600/30 text-blue-300 hover:text-blue-200 rounded-lg transition-all border border-slate-700 hover:border-blue-500/50"
+            >
               Select All
             </button>
-            <button onClick={props.onDeselectAll} class="px-3 py-1.5 text-xs font-bold bg-gray-800 hover:bg-red-900/40 text-gray-300 hover:text-red-400 rounded-lg transition-all border border-gray-700">
+            <button 
+              onClick={props.onDeselectAll} 
+              class="px-3 py-1.5 text-xs font-semibold bg-slate-800 hover:bg-red-900/30 text-blue-300 hover:text-red-400 rounded-lg transition-all border border-slate-700 hover:border-red-500/50"
+            >
               Clear
             </button>
           </div>
@@ -78,8 +93,8 @@ export const PhotoGrid: Component<PhotoGridProps> = (props) => {
                 onClick={() => setStatusFilter(status)}
                 class={`px-4 py-1.5 rounded-full text-xs font-bold uppercase tracking-wider transition-all border ${
                   statusFilter() === status 
-                    ? 'bg-indigo-600 border-indigo-400 text-white shadow-lg' 
-                    : 'bg-gray-800 border-gray-700 text-gray-400 hover:border-gray-500'
+                    ? 'bg-blue-600 border-blue-500/50 text-white shadow-lg shadow-blue-900/30' 
+                    : 'bg-slate-800 border-slate-700 text-blue-400/70 hover:border-slate-600'
                 }`}
               >
                 {status}
@@ -89,8 +104,22 @@ export const PhotoGrid: Component<PhotoGridProps> = (props) => {
         </div>
       </div>
 
-      {/* List layout */}
-      <div class="flex flex-col gap-4 overflow-y-auto pr-2 custom-scrollbar">
+      {/* Photos List */}
+      <div class="flex flex-col gap-3 overflow-y-auto custom-scrollbar flex-1">
+        <Show when={props.photos.length === 0}>
+          <EmptyStateMessage 
+            icon="🖼️" 
+            title="No Photos Yet" 
+            message="Photos from the source folder will appear here when the watcher is active."
+          />
+        </Show>
+        <Show when={props.photos.length > 0 && filteredPhotos().length === 0}>
+          <EmptyStateMessage 
+            icon="🔍" 
+            title="No Results" 
+            message={`No photos match the current filter. Try a different search or status.`}
+          />
+        </Show>
         <For each={visiblePhotos()}>
           {(photo) => (
             <PhotoCard
@@ -109,19 +138,13 @@ export const PhotoGrid: Component<PhotoGridProps> = (props) => {
 
       {/* Load More Button */}
       <Show when={hasMore()}>
-        <div class="flex justify-center mt-6 mb-2">
+        <div class="flex justify-center mt-4 mb-2">
           <button
             onClick={loadMore}
-            class="px-8 py-2.5 bg-gray-800 hover:bg-indigo-600 text-white font-bold rounded-xl border border-gray-700 transition-all shadow-lg"
+            class="px-8 py-2.5 bg-slate-800 hover:bg-blue-600/30 text-blue-300 hover:text-blue-200 font-semibold rounded-xl border border-slate-700 hover:border-blue-500/50 transition-all shadow-lg"
           >
             Load More (+{Math.min(PAGE_SIZE, filteredPhotos().length - displayLimit())})
           </button>
-        </div>
-      </Show>
-
-      <Show when={filteredPhotos().length === 0}>
-        <div class="flex flex-col items-center justify-center py-20 text-gray-500">
-          <p class="text-lg font-medium">No photos found</p>
         </div>
       </Show>
     </div>

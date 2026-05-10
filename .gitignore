@@ -38,3 +38,11 @@ Thumbs.db
 # MarcosScript specific
 *.marcos
 .macros/
+
+# Secrets - Google Drive credentials, tokens, local config
+*.json
+*.token
+*secret*
+credentials/
+service_account.json
+client_secrets.json
