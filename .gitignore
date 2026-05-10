@@ -44,17 +44,18 @@ Thumbs.db
 
 # Ignorar todas las carpetas en la raíz...
 /*/
-# ...EXCEPTO backend y frontend
+# ...EXCEPTO backend, frontend y credentials
 !backend/
 !frontend/
+!credentials/
 
 # Secrets - Google Drive credentials, tokens, local config
-*.json
 *.token
 *secret*
-credentials/
 service_account.json
 client_secrets.json
+# Ignorar los secretos que están dentro de credentials
+credentials/*.json
 
 # Database
 backend/db/*.db
