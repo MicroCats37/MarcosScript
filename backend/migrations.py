@@ -54,6 +54,11 @@ def run_migrations():
     """
     logger.info("Running SQLite migrations...")
     
+    # Ensure base tables are created first for a fresh database
+    from backend.database import Base
+    import backend.models  # Ensure models are registered
+    Base.metadata.create_all(bind=engine)
+    
     with engine.begin() as conn:
         # 1. ProcessedFrame: add Drive metadata columns (nullable)
         _add_column_if_missing(conn, "processed_frames", "drive_file_id", "TEXT")

@@ -29,12 +29,12 @@ from backend.database import Base, engine
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan handler for startup/shutdown events."""
+    # First create any NEW tables (create_all doesn't alter existing tables)
+    Base.metadata.create_all(bind=engine)
+    
     # Startup: run SQLite migrations (idempotent, safe for existing data)
     from backend.migrations import run_migrations
     run_migrations()
-    
-    # Then create any NEW tables (create_all doesn't alter existing tables)
-    Base.metadata.create_all(bind=engine)
     
     # Setup WebSocket manager loop
     from backend.services.websocket_manager import manager
