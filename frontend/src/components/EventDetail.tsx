@@ -1,4 +1,4 @@
-import { Component, For, Show, createSignal, createMemo, createEffect, onCleanup } from 'solid-js';
+import { Component, For, Show, createSignal, createMemo, createEffect } from 'solid-js';
 import { useParams } from '@solidjs/router';
 import { useEventStore, Photo, isSendable, ProcessedFrame } from '../stores/EventContext';
 import { getMediaUrl } from '../api/client';
@@ -13,44 +13,25 @@ export const EventDetail: Component = () => {
   const [selectedPhotos, setSelectedPhotos] = createSignal<Set<number>>(new Set<number>());
   const [selectedFrames, setSelectedFrames] = createSignal<Set<string>>(new Set<string>());
   const [processing, setProcessing] = createSignal(false);
-  const [showEmailPanel, setShowEmailPanel] = createSignal(false);
+  const [showEmailModal, setShowEmailModal] = createSignal(false);
   const [modalImage, setModalImage] = createSignal<{url: string, title: string} | null>(null);
-
-  createEffect(() => {
-    if (!params.id) return;
-    const id = parseInt(params.id);
-    if (!isNaN(id)) {
-      store.selectEvent(id);
-      let envBase = import.meta.env.VITE_API_BASE || 'http://127.0.0.1:8000';
-      let wsBase = envBase.replace('localhost', '127.0.0.1');
-      if (!wsBase.startsWith('http')) {
-        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-        wsBase = `${protocol}//127.0.0.1:8000`;
-      } else {
-        wsBase = wsBase.replace('http', 'ws');
-      }
-      const wsUrl = `${wsBase}/ws/events/${id}`;
-      const ws = new WebSocket(wsUrl);
-      ws.onmessage = (msg) => {
-        try {
-          const data = JSON.parse(msg.data);
-          if (data.type === 'photo_added' || data.type === 'photo_updated') {
-            store.loadPhotos(id);
-          } else if (data.type === 'frame_added') {
-            store.loadFrames(id);
-          } else if (data.type === 'watcher_status') {
-            store.fetchWatcherStatus(id);
-          }
-        } catch (err) { console.error('WS parse error:', err); }
-      };
-      onCleanup(() => ws.close());
-    }
-  });
+  const [toastMessage, setToastMessage] = createSignal<string | null>(null);
 
   const currentEvent = () => store.state.currentEvent;
   const photos = () => store.state.photos;
+  const sortedPhotos = createMemo(() => photos().slice().sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()));
   const frames = () => store.state.frames;
+  // Frames have no id/created_at, sort by filename descending for stable "newest first" ordering
+  const sortedFrames = createMemo(() => frames().slice().sort((a, b) => b.filename.localeCompare(a.filename)));
   const isWatching = () => store.state.isWatching;
+
+  // Auto-select event when navigating directly via URL
+  createEffect(() => {
+    const id = Number(params.id);
+    if (id && store.state.events.length > 0 && store.state.currentEvent?.id !== id) {
+      store.selectEvent(id);
+    }
+  });
 
   const sendableFrames = createMemo(() => {
     const sendable: ProcessedFrame[] = [];
@@ -94,7 +75,8 @@ export const EventDetail: Component = () => {
 
   const handleStartWatcher = async () => currentEvent() && await store.startWatcher(currentEvent()!.id);
   const handleStopWatcher = async () => currentEvent() && await store.stopWatcher(currentEvent()!.id);
-  const toggleEmailPanel = () => setShowEmailPanel((v) => !v);
+  const openEmailModal = () => setShowEmailModal(true);
+  const closeEmailModal = () => setShowEmailModal(false);
   const sendableCount = createMemo(() => sendableFrames().length);
 
   return (
@@ -162,9 +144,9 @@ export const EventDetail: Component = () => {
         {/* Main Content — two-panel layout */}
         <div class="photo-frame-container flex-1 grid grid-cols-12 gap-4 p-4 min-h-0 overflow-hidden">
           {/* LEFT: Photos grid + Process footer */}
-          <div class="col-span-8 bg-slate-800/20 rounded-2xl p-5 border border-slate-700/50 flex flex-col overflow-hidden">
+          <div class="col-span-8 bg-slate-800/20 rounded-2xl p-5 border border-slate-700/50 flex flex-col overflow-hidden ">
             <PhotoGrid
-              photos={photos()}
+              photos={sortedPhotos()}
               sourcePhotosPath={currentEvent()!.source_photos_path}
               outputPath={currentEvent()!.output_path}
               selectedPhotos={selectedPhotos()}
@@ -176,7 +158,7 @@ export const EventDetail: Component = () => {
               onViewImage={(url, title) => setModalImage({url, title})}
             />
             {/* Process Footer */}
-            <div class="process-section mt-4 bg-slate-800/60 rounded-xl p-4 flex items-center justify-between border border-slate-700 flex-shrink-0">
+            <div class="process-section mt-4 bg-slate-800/90 backdrop-blur-md rounded-xl p-4 flex items-center justify-between border border-slate-700 flex-shrink-0 sticky bottom-0 z-10 shadow-2xl">
               <div class="text-blue-300 text-sm">
                 <span class="font-semibold text-blue-100">{selectedPhotos().size}</span> photos selected, 
                 <span class="font-semibold text-blue-100 ml-2">{selectedFrames().size}</span> frames selected
@@ -184,10 +166,10 @@ export const EventDetail: Component = () => {
               <div class="flex gap-3">
                 <Show when={sendableCount() > 0}>
                   <button
-                    onClick={toggleEmailPanel}
+                    onClick={openEmailModal}
                     class="px-5 py-2.5 bg-green-600 hover:bg-green-500 text-white font-semibold rounded-xl transition-all shadow-lg"
                   >
-                    {showEmailPanel() ? 'Hide Email' : `Email (${sendableCount()})`}
+                    Email ({sendableCount()})
                   </button>
                 </Show>
                 <button 
@@ -209,20 +191,20 @@ export const EventDetail: Component = () => {
           {/* RIGHT: Frames panel + EmailSendPanel */}
           <div class="col-span-4 bg-slate-800/20 rounded-2xl p-5 border border-slate-700/50 flex flex-col gap-4 min-h-0 overflow-hidden">
             {/* Frames List */}
-            <div class="flex-shrink-0">
+            <div class="flex flex-col gap-3 overflow-y-auto custom-scrollbar flex-1">
               <h3 class="text-lg font-bold text-blue-100 mb-3 flex items-center gap-2">
                 Frames
                 <span class="text-xs font-semibold text-blue-400/60 bg-slate-800 px-2 py-0.5 rounded-full">
-                  {frames().length}
+                  {sortedFrames().length}
                 </span>
               </h3>
-              <div class="frames-grid grid grid-cols-2 gap-3 overflow-y-auto custom-scrollbar" style="max-height: 35vh">
+              <div class="frames-grid grid grid-cols-2 gap-3 overflow-y-auto custom-scrollbar">
                 <Show when={frames().length === 0}>
                   <div class="col-span-2 flex items-center justify-center py-8 text-blue-400/50 text-sm">
                     No frames available
                   </div>
                 </Show>
-                <For each={frames()}>
+                <For each={sortedFrames()}>
                   {(frame) => (
                     <div 
                       class={`frame-card p-2 rounded-xl cursor-pointer transition-all duration-200 flex flex-col items-center ${
@@ -242,41 +224,50 @@ export const EventDetail: Component = () => {
               </div>
             </div>
 
-            {/* Email Send Panel Area */}
-            <div class="flex-1 min-h-0 overflow-hidden flex flex-col">
-              <Show when={showEmailPanel() && currentEvent()}>
-                <EmailSendPanel
-                  sendableFrames={sendableFrames()}
-                  outputPath={currentEvent()!.output_path}
-                  eventId={currentEvent()!.id}
-                />
-              </Show>
-              <Show when={!showEmailPanel() && sendableCount() > 0}>
-                <div class="flex items-center justify-center h-full">
-                  <button
-                    onClick={toggleEmailPanel}
-                    class="px-6 py-4 bg-green-600/20 hover:bg-green-600 border border-green-600/50 text-green-400 hover:text-white font-bold rounded-xl transition-all"
-                  >
-                    Show Email Panel ({sendableCount()})
-                  </button>
-                </div>
-              </Show>
-              <Show when={!showEmailPanel() && sendableCount() === 0}>
-                <div class="flex items-center justify-center h-full text-blue-400/50 text-sm italic">
-                  No sendable frames yet
-                </div>
-              </Show>
-            </div>
+          
           </div>
         </div>
       </div>
 
-      <PhotoModal 
-        isOpen={!!modalImage()} 
-        imageUrl={modalImage()?.url || null} 
-        title={modalImage()?.title || null} 
-        onClose={() => setModalImage(null)} 
+      <PhotoModal
+        isOpen={!!modalImage()}
+        imageUrl={modalImage()?.url || null}
+        title={modalImage()?.title || null}
+        onClose={() => setModalImage(null)}
       />
+
+      <Show when={showEmailModal() && currentEvent()}>
+        <EmailSendPanel
+          isOpen={showEmailModal()}
+          onClose={closeEmailModal}
+          sendableFrames={sendableFrames()}
+          outputPath={currentEvent()!.output_path}
+          eventId={currentEvent()!.id}
+          onSuccess={() => {
+            setToastMessage('Email sent successfully!');
+            setTimeout(() => setToastMessage(null), 3000);
+          }}
+        />
+      </Show>
+
+      {/* Toast Notification */}
+      <Show when={toastMessage()}>
+        <div class="fixed top-4 right-4 z-[70] flex items-center gap-3 px-4 py-3 bg-emerald-600 text-white font-semibold rounded-xl shadow-lg shadow-emerald-900/30 border border-emerald-500 animate-fade-in">
+          <svg class="w-5 h-5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+          </svg>
+          <span>{toastMessage()}</span>
+          <button
+            onClick={() => setToastMessage(null)}
+            class="ml-2 w-6 h-6 rounded-lg hover:bg-emerald-700 flex items-center justify-center transition-all"
+            aria-label="Dismiss notification"
+          >
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+      </Show>
     </Show>
   );
 };

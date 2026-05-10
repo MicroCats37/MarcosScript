@@ -105,7 +105,7 @@ export const PhotoGrid: Component<PhotoGridProps> = (props) => {
       </div>
 
       {/* Photos List */}
-      <div class="flex flex-col gap-3 overflow-y-auto custom-scrollbar flex-1">
+      <div class="flex flex-col gap-3 overflow-y-auto custom-scrollbar flex-1 pb-20">
         <Show when={props.photos.length === 0}>
           <EmptyStateMessage 
             icon="🖼️" 

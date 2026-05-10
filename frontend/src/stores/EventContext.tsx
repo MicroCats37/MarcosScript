@@ -85,6 +85,12 @@ export interface EventState {
   error: string | null;
 }
 
+// WebSocket message types
+type WsPhotoMessage = { type: 'photo_added' | 'photo_updated'; photo: Photo };
+type WsFrameMessage = { type: 'frame_added'; frame?: Frame };
+type WsWatcherMessage = { type: 'watcher_status'; is_watching: boolean };
+type WsMessage = WsPhotoMessage | WsFrameMessage | WsWatcherMessage;
+
 interface EventStoreValue {
   state: EventState;
   setState: SetStoreFunction<EventState>;
@@ -112,7 +118,7 @@ export interface EmailSendRequest {
   recipients: RecipientInput[];
   subject: string;
   body?: string;
-  html: boolean;
+  html?: boolean;
   cc?: string[];
   bcc?: string[];
   usuario_creacion?: string;
@@ -148,6 +154,71 @@ export const EventProvider: ParentComponent = (props) => {
 
   const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8000';
 
+  // WebSocket management
+  let ws: WebSocket | null = null;
+
+  const getWsUrl = (eventId: number): string => {
+    const envBase = import.meta.env.VITE_API_BASE || 'http://127.0.0.1:8000';
+    let wsBase = envBase.replace('localhost', '127.0.0.1');
+    if (!wsBase.startsWith('http')) {
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      wsBase = `${protocol}//127.0.0.1:8000`;
+    } else {
+      wsBase = wsBase.replace('http', 'ws');
+    }
+    return `${wsBase}/ws/events/${eventId}`;
+  };
+
+  // Merge processed frames by id (idempotent)
+  const mergeProcessedFrames = (existing: ProcessedFrame[], incoming: ProcessedFrame[]): ProcessedFrame[] => {
+    const merged = [...existing];
+    for (const frame of incoming) {
+      const idx = merged.findIndex((f) => f.id === frame.id);
+      if (idx >= 0) {
+        merged[idx] = { ...merged[idx], ...frame };
+      } else {
+        merged.push(frame);
+      }
+    }
+    return merged;
+  };
+
+  // Upsert photo by id (idempotent for duplicate/out-of-order)
+  const upsertPhoto = (photo: Photo): void => {
+    const existing = state.photos.find((p) => p.id === photo.id);
+    if (existing) {
+      setState('photos', (p) => p.id === photo.id, {
+        ...photo,
+        processed_frames: mergeProcessedFrames(existing.processed_frames, photo.processed_frames),
+      });
+    } else {
+      setState('photos', (photos) => [...photos, photo]);
+    }
+  };
+
+  // Upsert frame by filename (idempotent)
+  const upsertFrame = (frame: Frame): void => {
+    const existing = state.frames.find((f) => f.filename === frame.filename);
+    if (!existing) {
+      setState('frames', (frames) => [...frames, frame]);
+    }
+  };
+
+  // Handle incoming WebSocket messages
+  const handleWsMessage = (data: WsMessage): void => {
+    if (data.type === 'photo_added' || data.type === 'photo_updated') {
+      if (data.photo && data.photo.id) {
+        upsertPhoto(data.photo);
+      }
+    } else if (data.type === 'frame_added') {
+      if (data.frame && data.frame.filename) {
+        upsertFrame(data.frame);
+      }
+    } else if (data.type === 'watcher_status') {
+      setState('isWatching', data.is_watching);
+    }
+  };
+
   const store: EventStoreValue = {
     state,
     setState,
@@ -176,6 +247,22 @@ export const EventProvider: ParentComponent = (props) => {
           store.loadFrames(eventId),
           store.fetchWatcherStatus(eventId)
         ]);
+        // Setup WebSocket for this event
+        if (ws) {
+          ws.close();
+        }
+        ws = new WebSocket(getWsUrl(eventId));
+        ws.onmessage = (msg) => {
+          try {
+            const data = JSON.parse(msg.data) as WsMessage;
+            handleWsMessage(data);
+          } catch (err) {
+            console.error('WS parse error:', err);
+          }
+        };
+        ws.onclose = () => {
+          ws = null;
+        };
       }
     },
 
@@ -278,20 +365,19 @@ export const EventProvider: ParentComponent = (props) => {
           body: JSON.stringify({ photo_ids: photoIds, frame_filenames: frameFilenames }),
         });
         if (!res.ok) throw new Error('Failed to process photos');
-        // Reload photos to get updated processed_frames
-        await store.loadPhotos(eventId);
+        // No need to call loadPhotos here, WebSocket will update the state
       } catch (e) {
         setState('error', e instanceof Error ? e.message : 'Unknown error');
       }
     },
 
-    cipLookup: async (cip: string) => {
+    cipLookup: async (cip: string): Promise<CipLookupResult> => {
       const res = await fetch(`${API_BASE}/cip/${encodeURIComponent(cip)}/lookup`);
       if (!res.ok) throw new Error('CIP lookup failed');
-      return res.json() as CipLookupResult;
+      return res.json() as Promise<CipLookupResult>;
     },
 
-    sendEmail: async (eventId: number, request: EmailSendRequest) => {
+    sendEmail: async (eventId: number, request: EmailSendRequest): Promise<EmailSendRecord[]> => {
       const res = await fetch(`${API_BASE}/events/${eventId}/email/send`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -302,25 +388,25 @@ export const EventProvider: ParentComponent = (props) => {
         throw new Error(err.detail || 'Email send failed');
       }
       const data = await res.json();
-      return (data.sends as EmailSendResponse[]);
+      return (data.sends as EmailSendRecord[]);
     },
 
-    listEmailSends: async (eventId: number, status?: string) => {
+    listEmailSends: async (eventId: number, status?: string): Promise<EmailSendRecord[]> => {
       const url = status
         ? `${API_BASE}/events/${eventId}/email/sends?status=${encodeURIComponent(status)}`
         : `${API_BASE}/events/${eventId}/email/sends`;
       const res = await fetch(url);
       if (!res.ok) throw new Error('Failed to load email history');
-      return res.json() as EmailSendRecord[];
+      return res.json() as Promise<EmailSendRecord[]>;
     },
 
-    getEmailSend: async (sendId: number) => {
+    getEmailSend: async (sendId: number): Promise<EmailSendRecord> => {
       const res = await fetch(`${API_BASE}/email/sends/${sendId}`);
       if (!res.ok) throw new Error('Failed to load email send details');
-      return res.json() as EmailSendRecord;
+      return res.json() as Promise<EmailSendRecord>;
     },
 
-    retryDriveUpload: async (frameId: number) => {
+    retryDriveUpload: async (frameId: number): Promise<DriveUploadResponse> => {
       const res = await fetch(`${API_BASE}/processed-frames/${frameId}/drive-upload`, {
         method: 'POST',
       });
@@ -332,7 +418,7 @@ export const EventProvider: ParentComponent = (props) => {
       if (state.currentEvent) {
         await store.loadPhotos(state.currentEvent.id);
       }
-      return res.json() as DriveUploadResponse;
+      return res.json() as Promise<DriveUploadResponse>;
     },
   };
 

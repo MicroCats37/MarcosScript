@@ -44,6 +44,34 @@ class PhotoEventHandler(FileSystemEventHandler):
         ext = os.path.splitext(path)[1].lower()
         return ext in (".jpg", ".jpeg", ".png", ".webp")
 
+    def _serialize_photo_with_frames(self, photo: PhotoState) -> dict:
+        """Serialize PhotoState to JSON-safe dict with full processed_frames."""
+        from backend.schemas import PhotoWithFramesResponse
+
+        return PhotoWithFramesResponse(
+            id=photo.id,
+            event_id=photo.event_id,
+            filename=photo.filename,
+            file_hash=photo.file_hash,
+            status=photo.status,
+            error_message=photo.error_message,
+            created_at=photo.created_at,
+            processed_at=photo.processed_at,
+            processed_frames=[
+                {
+                    "id": pf.id,
+                    "frame_filename": pf.frame_filename,
+                    "output_filename": pf.output_filename,
+                    "processed_at": pf.processed_at,
+                    "drive_file_id": pf.drive_file_id,
+                    "drive_web_view_link": pf.drive_web_view_link,
+                    "drive_uploaded_at": pf.drive_uploaded_at,
+                    "drive_upload_error": pf.drive_upload_error,
+                }
+                for pf in photo.processed_frames
+            ],
+        ).model_dump(mode="json")
+
     def _add_photo_state(self, filepath: str):
         """Add a PhotoState entry for the discovered file."""
         db = SessionLocal()
@@ -64,10 +92,14 @@ class PhotoEventHandler(FileSystemEventHandler):
                 )
                 db.add(photo_state)
                 db.commit()
-                
-                # Signal: New photo discovered
+                db.refresh(photo_state)
+
+                # Signal: New photo discovered with full DTO payload
                 from backend.services.websocket_manager import manager
-                manager.broadcast_sync(self.event_id, {"type": "photo_added"})
+                manager.broadcast_sync(self.event_id, {
+                    "type": "photo_added",
+                    "photo": self._serialize_photo_with_frames(photo_state),
+                })
         except Exception as e:
             print(f"Error adding photo state for {filepath}: {e}")
             db.rollback()

@@ -20,9 +20,10 @@ npm-debug.log
 yarn-error.log
 
 # Environment
-.env
-.env.local
-.env.*.local
+# (El usuario solicitó explícitamente no ignorar los .env)
+# .env
+# .env.local
+# .env.*.local
 
 # IDE
 .vscode/
@@ -39,10 +40,12 @@ Thumbs.db
 *.marcos
 .macros/
 
-# Secrets - Google Drive credentials, tokens, local config
-*.json
-*.token
-*secret*
-credentials/
-service_account.json
-client_secrets.json
+
+
+# Ignorar todas las carpetas en la raíz...
+/*/
+# ...EXCEPTO backend y frontend
+!backend/
+!frontend/
+
+
