@@ -56,4 +56,9 @@ credentials/
 service_account.json
 client_secrets.json
 
+# Database
+backend/db/*.db
+backend/db/*.sqlite3
+
+
 
