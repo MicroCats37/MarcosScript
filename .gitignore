@@ -48,4 +48,12 @@ Thumbs.db
 !backend/
 !frontend/
 
+# Secrets - Google Drive credentials, tokens, local config
+*.json
+*.token
+*secret*
+credentials/
+service_account.json
+client_secrets.json
+
 
